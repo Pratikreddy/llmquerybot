@@ -1,4 +1,3 @@
-
 import streamlit as st
 import base64
 import openai
@@ -90,8 +89,7 @@ def execute_dataframe_query(data, query):
         result = eval(query)
         return result
     except Exception as e:
-        st.error(f"Error executing query: {e}")
-        return None
+        return f"Error executing query: {e}"
 
 # Function to process prompt with OpenAI API
 def process_prompt_openai(system_prompt, chat_history):
@@ -112,24 +110,45 @@ def process_prompt_openai(system_prompt, chat_history):
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
     return response.json()
 
+# Helper function to read image bytes and encode them in base64
+def read_image_base64(image_path):
+    with open(image_path, 'rb') as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
 # Function to handle message sending and processing
 def send_message():
     user_prompt = st.session_state.input_buffer
+    imgpaths = [f"temp_image_{i}.png" for i, _ in enumerate(uploaded_files)] if uploaded_files else []
 
-    if not user_prompt:
-        st.write("Please provide a text input.")
+    if not user_prompt and not uploaded_files:
+        st.write("Please provide a text input, an image, or both.")
     else:
-        st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+        if uploaded_files:
+            # Save the uploaded files temporarily
+            for i, uploaded_file in enumerate(uploaded_files):
+                with open(imgpaths[i], "wb") as f:
+                    f.write(uploaded_file.getbuffer())
 
-        response = process_prompt_openai(initial_system_message, st.session_state.chat_history)
-        command = response['choices'][0]['message']['content'].strip()
+        # Append structured messages to chat history
+        if user_prompt:
+            st.session_state.chat_history.append({"role": "user", "content": user_prompt})
+        
+        # Determine if the user prompt is a query or a regular message
+        if any(keyword in user_prompt.lower() for keyword in ["how", "what", "tell", "show", "get", "find"]):
+            response = process_prompt_openai(initial_system_message, st.session_state.chat_history)
+            command = response['choices'][0]['message']['content'].strip()
 
-        query_result = execute_dataframe_query(data, command)
+            # Display the query for transparency
+            st.write(f"Executing query: {command}")
 
-        if query_result is not None:
-            st.session_state.chat_history.append({"role": "assistant", "content": str(query_result)})
+            query_result = execute_dataframe_query(data, command)
+
+            if "Error executing query" in query_result:
+                st.session_state.chat_history.append({"role": "assistant", "content": "I encountered an error while processing your request."})
+            else:
+                st.session_state.chat_history.append({"role": "assistant", "content": str(query_result)})
         else:
-            st.session_state.chat_history.append({"role": "assistant", "content": "I encountered an error while processing your request."})
+            st.session_state.chat_history.append({"role": "assistant", "content": "Thank you for your message!"})
         
         st.session_state.input_buffer = ""
 
@@ -137,6 +156,14 @@ def send_message():
 
 # Input for chat messages
 user_input = st.text_input("Type your message here:", key="input_buffer")
+
+# File upload for up to 3 images
+uploaded_files = st.file_uploader("Upload up to 3 image files", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+
+# Display thumbnails of uploaded images
+if uploaded_files:
+    for uploaded_file in uploaded_files:
+        st.image(uploaded_file, width=100)
 
 # Send button
 st.button("Send", on_click=send_message)

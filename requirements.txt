@@ -2,4 +2,4 @@ streamlit
 pandas
 openai
 requests
-sqlite3
+

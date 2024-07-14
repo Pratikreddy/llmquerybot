@@ -1,72 +1,85 @@
 import streamlit as st
-import base64
+import sqlite3
+import pandas as pd
 import openai
 import requests
-import json
-from streamlit_gsheets import GSheetsConnection
-import pandas as pd
-
-# Set up the page
-st.set_page_config(page_title="HS Code Lookup System", layout="wide")
+import base64
 
 # Load the OpenAI API key from Streamlit secrets
 api_key = st.secrets["openai"]["api_key"]
 openai.api_key = api_key
 
-# Google Sheets URL and worksheet ID from secrets
-spreadsheet_url = "https://docs.google.com/spreadsheets/d/1wgliY7XyZF-p4FUa1MiELUlQ3v1Tg6KDZzWuyW8AMo4/edit?gid=835818411"
-worksheet_id = "835818411"
+# Define the data
+data = {
+    "HS Code": [84137099, 40101900, 73181510, 73181590, 73182100, 73182100, 73194020, 40101200, 73079910, 40101200],
+    "Product Name": [
+        "Centrifugal Fire Pump Horizontal Split Case", 
+        "Conveyor Belt, Fabric Belt; 2400 MM X EP 200 X 4 PLY X 10 MM",
+        "M12 x 120mm Lg Hex Hd HT Bolt BZP",
+        "Bolt (M27X260X30)",
+        "SEW - Retaining Ring DIN472 100X3-FS",
+        "Crusher SP; Oil Retaining Ring",
+        "Clamp, C: 4in Forged Ultra Strong Drop Steel Clamp Bar Type",
+        "Conveyor Belt Type: 2200 EP 630/4 6+3 Y ME Belt Conveyor Belt Conveyor",
+        "Lubrication Fitting Assortment: Automotive Hydraulic Grease Nipple",
+        "Stud, Recessed: Threaded Both End"
+    ],
+    "Definition": [
+        "Fire pump using centrifugal principle to pump water, with horizontally split casing design",
+        "Fabric conveyor belt with specifications: Width: 2400mm, Thickness: 10mm, Fabric Layer Thickness: 4mm, Number of Fabric Layers: 4, Tensile Strength: EP 200, Grade: M",
+        "Large hex head high tensile strength bolt with bright zinc plating, commonly used in various industrial and construction applications",
+        "High-strength hex bolt with metric thread diameter of 27mm, length of 260mm, and head height of 30mm. Commonly used in industrial applications requiring high strength and reliability.",
+        "Retaining ring used to hold components in place, outer diameter of 100mm and thickness of 3mm",
+        "Oil retaining ring used in coal crusher scoop coupling, with an outer diameter of 100mm and thickness of 3mm to prevent oil leakage",
+        "Strong forged steel C clamp bar type with 4 inch length, jaw opening up to 100mm, and throat depth of 60mm",
+        "Conveyor belt type EP630/4 with width of 2200mm, cover thickness of 6+3mm, DIN Y grade, and polyester material, capable of withstanding loads up to 630 kg/m",
+        "Lubrication fitting assortment used for automotive components, consisting of 12 different grease nipple sizes including SAE, ANF, BSP, Metric, and BSF",
+        "Special long threaded stud used on electromagnetic vibratory model FV890 with component code EQ 2482, with a length of 900mm and includes 4 M42 nuts"
+    ],
+    "Material": [
+        "Cast Iron / Steel", "Polyester (EP)", "Bright Zinc Plated", "Bright Zinc Plated", "Stainless Steel", 
+        "Stainless Steel", "Stainless Steel", "Polyester", "-", "Polyester"
+    ],
+    "Specifications": [
+        "-", 
+        "Width: 2400mm, Thickness: 10mm, Fabric Layer Thickness: 4mm, Number of Fabric Layers: 4", 
+        "Diameter: M12, Length: 120mm, Large Hex Head", 
+        "Diameter: M27, Length: 260mm, Head Height: 30mm", 
+        "Outer Diameter: 100mm, Thickness: 3mm",
+        "Outer Diameter: 100mm, Thickness: 3mm",
+        "Jaw Opening: 100mm, Throat Depth: 60mm",
+        "Width: 2200mm, Cover Thickness: 6+3mm, DIN Y Grade",
+        "12 Sizes: SAE, ANF, BSP, Metric, BSF",
+        "Length: 900mm, Includes 4 M42 Nuts"
+    ]
+}
 
-# Set up connection to Google Sheets
-conn = st.experimental_connection("gsheets", type=GSheetsConnection)
+# Convert data to DataFrame
+df = pd.DataFrame(data)
 
-@st.cache_data
-def get_data_from_gsheet(url, worksheet_id):
-    try:
-        st.write(f"Reading from Google Sheets URL: {url} and Worksheet ID: {worksheet_id}")
-        data = conn.read(spreadsheet=url, usecols=list(range(5)), worksheet=worksheet_id)
-        return data
-    except Exception as e:
-        st.error(f"Error reading from Google Sheets: {e}")
-        return pd.DataFrame()  # Return an empty DataFrame in case of error
+# Connect to SQLite database (or create it)
+conn = sqlite3.connect('hs_codes.db')
 
-data = get_data_from_gsheet(spreadsheet_url, worksheet_id)
+# Create table
+conn.execute('''
+CREATE TABLE IF NOT EXISTS HS_CODES (
+    HS_Code INTEGER,
+    Product_Name TEXT,
+    Definition TEXT,
+    Material TEXT,
+    Specifications TEXT
+)
+''')
 
-# Construct the initial system message from the Google Sheets data
-initial_system_message = """
-You are a virtual assistant providing HS Code information. Be professional and informative.
-Do not make up any details you do not know. Always sound smart and refer to yourself as Jarvis.
+# Insert data into table
+df.to_sql('HS_CODES', conn, if_exists='replace', index=False)
 
-Only output the information given below and nothing else of your own knowledge. This is the only truth. Translate everything to English to the best of your ability.
-and only output when prompted towards something don't dump all the codes into the response.
+# Commit and close connection
+conn.commit()
+conn.close()
 
-We help you find the right HS Code for your products quickly and accurately. Save time and avoid customs issues with our automated HS Code lookup tool.
-
-Product List:
-"""
-
-if not data.empty:
-    for index, row in data.iterrows():
-        initial_system_message += f"""
-{row['Product Name']}
-* Definisi: {row['Definition']}
-* Bahan: {row['Material']}
-* HS Code: {row['HS Code']}
-* Specifications: {row['Specifications']}
-"""
-
-initial_system_message += """
-You are an expert in converting English questions to Pandas DataFrame queries! The DataFrame has the following columns: 'Product Name', 'Definition', 'Material', 'HS Code', 'Specifications'.
-
-For example:
-Example 1 - How many entries of records are present? 
-The command will be something like this: data.shape[0]
-
-Example 2 - Tell me all the products made of steel? 
-The command will be something like this: data[data['Material'] == 'steel']
-
-Generate only the command and not the full code. Do not use backticks.
-"""
+# Set up the page
+st.set_page_config(page_title="HS Code Lookup System", layout="wide")
 
 # Initialize chat history as a session state
 if "chat_history" not in st.session_state:
@@ -83,13 +96,19 @@ for message in st.session_state.chat_history:
     elif message["role"] == "assistant":
         st.markdown(f"<div style='border: 2px solid green; padding: 10px; margin: 10px 0; border-radius: 8px; width: 80%; float: left; clear: both;'>{message['content']}</div>", unsafe_allow_html=True)
 
-# Function to execute DataFrame queries
-def execute_dataframe_query(data, query):
-    try:
-        result = eval(query)
-        return result
-    except Exception as e:
-        return f"Error executing query: {e}"
+# Function to read image bytes and encode them in base64
+def read_image_base64(image_path):
+    with open(image_path, 'rb') as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+# Function to execute SQL query
+def execute_sql_query(query, db='hs_codes.db'):
+    conn = sqlite3.connect(db)
+    cursor = conn.cursor()
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 # Function to process prompt with OpenAI API
 def process_prompt_openai(system_prompt, chat_history):
@@ -102,18 +121,13 @@ def process_prompt_openai(system_prompt, chat_history):
         messages.append({"role": entry["role"], "content": entry["content"]})
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-4",
         "messages": messages,
         "max_tokens": 3000
     }
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
     return response.json()
-
-# Helper function to read image bytes and encode them in base64
-def read_image_base64(image_path):
-    with open(image_path, 'rb') as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
 
 # Function to handle message sending and processing
 def send_message():
@@ -141,12 +155,12 @@ def send_message():
             # Display the query for transparency
             st.write(f"Executing query: {command}")
 
-            query_result = execute_dataframe_query(data, command)
+            query_result = execute_sql_query(command)
 
-            if "Error executing query" in query_result:
-                st.session_state.chat_history.append({"role": "assistant", "content": "I encountered an error while processing your request."})
-            else:
+            if query_result:
                 st.session_state.chat_history.append({"role": "assistant", "content": str(query_result)})
+            else:
+                st.session_state.chat_history.append({"role": "assistant", "content": "I encountered an error while processing your request."})
         else:
             st.session_state.chat_history.append({"role": "assistant", "content": "Thank you for your message!"})
         
@@ -168,6 +182,12 @@ if uploaded_files:
 # Send button
 st.button("Send", on_click=send_message)
 
-# Display data from Google Sheets
+# Display data from SQLite
+def load_data():
+    conn = sqlite3.connect('hs_codes.db')
+    df = pd.read_sql_query("SELECT * FROM HS_CODES", conn)
+    conn.close()
+    return df
+
 st.write("## Product Data")
-st.dataframe(data)
+st.dataframe(load_data())
